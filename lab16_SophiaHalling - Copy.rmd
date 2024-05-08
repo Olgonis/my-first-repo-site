@@ -1,0 +1,249 @@
+---
+title: "lab 16"
+author: "Sophia Halling"
+date: "2024-05-01"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Examples
+
+### Libraries
+
+```{r}
+library(tidyverse)
+library(knitr)
+library(ggtree)
+library(TDbook) #A Companion Package for the Book "Data Integration, Manipulation and Visualization of Phylogenetic Trees" by Guangchuang Yu (2022, ISBN:9781032233574).
+library(ggimage)
+library(rphylopic)
+library(treeio)
+library(tidytree)
+library(ape)
+library(TreeTools)
+library(phytools)
+library(ggnewscale)
+library(ggtreeExtra)
+library(ggstar)
+```
+
+### Read in files
+
+#### Mag table
+
+```{r}
+NEON_MAGs <- read_csv("data/NEON/GOLD_Study_ID_Gs0161344_NEON_2024_4_21.csv") %>% 
+  # remove columns that are not needed for data analysis
+  select(-c(`GOLD Study ID`, `Bin Methods`, `Created By`, `Date Added`, `Bin Lineage`)) %>% 
+  # create a new column with the Assembly Type
+  mutate("Assembly Type" = case_when(`Genome Name` == "NEON combined assembly" ~ `Genome Name`,
+                            TRUE ~ "Individual")) %>% 
+  mutate_at("Assembly Type", str_replace, "NEON combined assembly", "Combined") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "d__", "") %>%  
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "p__", "") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "c__", "") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "o__", "") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "f__", "") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "g__", "") %>% 
+  mutate_at("GTDB-Tk Taxonomy Lineage", str_replace, "s__", "") %>%
+  separate(`GTDB-Tk Taxonomy Lineage`, c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species"), ";", remove = FALSE) %>% 
+  mutate_at("Domain", na_if,"") %>% 
+  mutate_at("Phylum", na_if,"") %>% 
+  mutate_at("Class", na_if,"") %>% 
+  mutate_at("Order", na_if,"") %>% 
+  mutate_at("Family", na_if,"") %>% 
+  mutate_at("Genus", na_if,"") %>% 
+  mutate_at("Species", na_if,"") %>% 
+  
+  # Get rid of the the common string "Soil microbial communities from "
+  mutate_at("Genome Name", str_replace, "Terrestrial soil microbial communities from ", "") %>% 
+  # Use the first `-` to split the column in two
+  separate(`Genome Name`, c("Site","Sample Name"), " - ") %>% 
+  # Get rid of the the common string "S-comp-1"
+  mutate_at("Sample Name", str_replace, "-comp-1", "") %>%
+  # separate the Sample Name into Site ID and plot info
+  separate(`Sample Name`, c("Site ID","subplot.layer.date"), "_", remove = FALSE,) %>% 
+  # separate the plot info into 3 columns
+  separate(`subplot.layer.date`, c("Subplot", "Layer", "Date"), "-") 
+```
+
+#### Metagenome table
+
+```{r}
+NEON_metagenomes <- read_tsv("data/NEON/exported_img_data_Gs0161344_NEON.tsv") %>% 
+  select(-c(`Domain`, `Sequencing Status`, `Sequencing Center`)) %>% 
+  rename(`Genome Name` = `Genome Name / Sample Name`) %>% 
+  filter(str_detect(`Genome Name`, 're-annotation', negate = T)) %>% 
+  filter(str_detect(`Genome Name`, 'WREF plot', negate = T)) 
+```
+
+```{r}
+NEON_metagenomes <- NEON_metagenomes %>% 
+  # Get rid of the the common string "Soil microbial communities from "
+  mutate_at("Genome Name", str_replace, "Terrestrial soil microbial communities from ", "") %>% 
+  # Use the first `-` to split the column in two
+  separate(`Genome Name`, c("Site","Sample Name"), " - ") %>% 
+  # Get rid of the the common string "-comp-1"
+  mutate_at("Sample Name", str_replace, "-comp-1", "") %>%
+  # separate the Sample Name into Site ID and plot info
+  separate(`Sample Name`, c("Site ID","subplot.layer.date"), "_", remove = FALSE,) %>% 
+  # separate the plot info into 3 columns
+  separate(`subplot.layer.date`, c("Subplot", "Layer", "Date"), "-") 
+```
+
+#### NEON chemistry data
+
+```{r}
+NEON_chemistry <- read_tsv("data/NEON/neon_plot_soilChem1_metadata.tsv") %>% 
+  # remove -COMP from genomicsSampleID
+  mutate_at("genomicsSampleID", str_replace, "-COMP", "") 
+```
+
+#### Join data
+
+```{r}
+NEON_MAGs_metagenomes_chemistry <- NEON_MAGs %>% 
+  left_join(NEON_metagenomes, by = "Sample Name") %>% 
+  left_join(NEON_chemistry, by = c("Sample Name" = "genomicsSampleID")) %>% 
+  rename("label" = "Bin ID")
+```
+
+
+### Trees
+
+```{r}
+tree_arc <- read.tree("data/NEON/gtdbtk.ar53.decorated.tree")
+tree_bac <- read.tree("data/NEON/gtdbtk.bac120.decorated.tree")
+```
+
+#### Subtree
+
+```{r}
+# Make a vector with the internal node labels
+node_vector_bac = c(tree_bac$tip.label,tree_bac$node.label)
+
+# Search for your Phylum or Class to get the node
+grep("Bacteroidota", node_vector_bac, value = TRUE)
+```
+
+```{r}
+match(grep("Bacteroidota", node_vector_bac, value = TRUE), node_vector_bac)
+```
+
+```{r}
+tree_bac_preorder <- Preorder(tree_bac)
+tree_Bacteroidota <- Subtree(tree_bac_preorder, 2507)
+```
+
+### Filter NEON data
+
+```{r}
+NEON_MAGs_Bacteroidota <- NEON_MAGs_metagenomes_chemistry %>% 
+  filter(Phylum == "Bacteroidota") 
+```
+
+
+### Tree graphs
+
+#### Rectangular
+
+```{r}
+ggtree(tree_Bacteroidota) +
+  geom_tiplab(size=3) +
+  xlim(0,20)
+```
+
+#### Circular
+
+```{r}
+ggtree(tree_Bacteroidota, layout="circular") + 
+  geom_tiplab(aes(angle=angle))+
+    theme_tree() +
+    xlim(0,20)
+```
+#### Circular with taxonomic highlight
+
+```{r}
+ggtree(tree_bac, layout="circular") +
+    geom_hilight(node=2507, fill="steelblue", alpha=.6) 
+```
+
+#### circular with taxonomic label
+
+```{r}
+ggtree(tree_bac, layout="circular", branch.length="none") +
+    geom_hilight(node=2507, fill="steelblue", alpha=.6) +
+    geom_cladelab(node=2507, label="Bacteroidota", align=TRUE,  
+                  offset = 0, textcolor='steelblue', barcolor='steelblue')
+```
+
+#### circular with taxonomy collapsed
+
+```{r}
+ggtree(tree_bac, layout="circular", branch.length="none") %>% 
+  collapse(node=2507) + 
+  geom_point2(aes(subset=(node==55)), shape=23, size=5, fill='steelblue') +
+  geom_cladelab(node=55, label="Bacteroidota", align=TRUE,  
+                  offset = 2, textcolor='steelblue')
+```
+
+#### circular with taxonomy collapsed into a triangle
+
+```{r}
+p <- ggtree(tree_bac, layout="circular", branch.length="none")
+scaleClade(p, 2507, .2) %>% collapse(2507, 'min', fill="steelblue")  +
+  geom_cladelab(node=2507, label="Bacteroidota", align=TRUE,  
+                  offset = 0.2, textcolor='steelblue')
+```
+
+#### adding data to the tree
+
+```{r}
+ggtree(tree_Bacteroidota, layout="circular")  %<+%
+  NEON_MAGs_metagenomes_chemistry + 
+  geom_tiplab(size=2, hjust=-.1) +
+  xlim(0,20) +
+  geom_point(mapping=aes(color=Class)) 
+```
+
+```{r}
+ggtree(tree_Bacteroidota, layout="circular")  %<+%
+  NEON_MAGs_metagenomes_chemistry + 
+  geom_tiplab(size=2, hjust=-.1) +
+  xlim(0,20) +
+  geom_point(mapping=aes(color=Class, shape = `Assembly Type`))
+```
+
+```{r}
+ggtree(tree_Bacteroidota)  %<+%
+  NEON_MAGs_metagenomes_chemistry + 
+  geom_tiplab(size=2, hjust=-.1) +
+  xlim(0,20) +
+  geom_point(mapping=aes(color=`Ecosystem Subtype`)) 
+```
+
+#### adding a gradient
+
+```{r}
+ggtree(tree_Bacteroidota)  %<+%
+  NEON_MAGs_metagenomes_chemistry + 
+  geom_tiplab(size=2, hjust=-.1) +
+  xlim(0,20) +
+  geom_point(mapping=aes(color=`Ecosystem Subtype`)) 
+```
+
+#### circular tree with data
+
+```{r}
+ggtree(tree_Bacteroidota, layout="circular")  %<+%
+  NEON_MAGs_metagenomes_chemistry + 
+  geom_point2(mapping=aes(color=`Ecosystem Subtype`, size=`Total Number of Bases`))
+```
+
